@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+'use strict'
+
+const program = require('commander')
+const r = require('rethinkdb')
+const { hostname } = require('os')
+const perror = (err) => console.error(err)
+const pline = (ln) => process.stdout.write(ln+'\n')
+const { max } = Math
+const DHT = require('node-dht-sensor')
+const isTTY = process.stdout.isTTY
+const timestampStr = () => Number(new Date().valueOf() / 1000).toFixed(3)
+
+/*
+ * node-dht-sensor cache result for 2 seconds
+ * it makes no sense to read more frequently than that
+ * also, node's timer is not very precise, add one extra second to get 'fresh' readings
+ */
+const MIN_READ_INTERVAL_SECOND = 3
+
+let gpioPinStr, gpioPin
+
+program
+    .version('1.0.0')
+    .arguments('<gpio>')
+    .option('-i, --interval <secs>', `Read interval, in seconds; min: ${MIN_READ_INTERVAL_SECOND}, default: 5`, parseInt)
+    .option('-a, --aggregate',       'Aggregate readings, report timeseries as changes')
+    .option('-h, --db-host <host>',  'Rethinkdb host to report readings')
+    .option('-t, --tag <tag>',       `Tag for database record, default: os.hostname() => "${hostname()}"`)
+    .option('--db-port <port>',      'Rethinkdb port, default: 28015', parseInt)
+    .option('--db <db>',             'Rethinkdb database, default: "sensor"')
+    .option('--table <table>',       'Rethinkdb table, default: "dht"')
+    .action( (gpio) => gpioPin = parseInt( gpioPinStr = gpio ) )
+
+const {
+    interval = 5,
+    aggregate = false,
+    dbHost,
+    db = 'sensor',
+    dbPort = 28015,
+    table = 'dht',
+    tag = hostname()
+} = program.parse(process.argv)
+
+if (gpioPinStr === undefined) {
+    perror('GPIO pin of DHT-11 sensor is required!')
+    process.exit(1)
+}
+
+if ( String(gpioPin) !== gpioPinStr || !gpioPin ) {
+    perror('Invalid GPIO pin number!')
+    process.exit(1)
+}
+
+let prevTemp, prevHumid
+const intervalFunc = () =>
+    DHT.read(11, gpioPin, (err, temperature, humidity) => {
+    	if (err)
+	    return perror(err.message)
+
+	if (aggregate && prevTemp === temperature && prevHumid === humidity)
+	    return
+
+	[prevTemp, prevHumid] = [temperature, humidity]
+
+	if (isTTY)
+	    pline(`${timestampStr()}, ${temperature}°C, ${humidity}% RH`)
+
+	if (dbHost)
+	    r.connect({ host: dbHost, port: dbPort, db: db }, (err, conn) => {
+	        if (err)
+		    return perror(err.message)
+		r.table(table).insert({ id: r.now().toEpochTime(), temperature, humidity, tag }).run(conn)
+		.then( ({first_error}) => first_error ? perror(first_error) : null )
+		.then( () => conn.close() )
+		.catch( (err) => perror(err.message) )
+	    })
+    })
+
+
+// setup interval, execute immediately
+setInterval(intervalFunc, max(3, interval) * 1000)
+intervalFunc()
