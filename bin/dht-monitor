@@ -10,6 +10,7 @@ const { max } = Math
 const DHT = require('node-dht-sensor')
 const isTTY = process.stdout.isTTY
 const timestampStr = () => Number(new Date().valueOf() / 1000).toFixed(3)
+const toDecimal = (num, d) => Number( Number(num).toFixed(d) )
 
 /*
  * node-dht-sensor cache result for 2 seconds
@@ -30,6 +31,7 @@ program
     .option('--db-port <port>',      'Rethinkdb port, default: 28015', parseInt)
     .option('--db <db>',             'Rethinkdb database, default: "sensor"')
     .option('--table <table>',       'Rethinkdb table, default: "dht"')
+    .option('-w, --warmup <secs>',   'Warpup delay, in seconds; default: 5', parseInt)
     .action( (gpio) => gpioPin = parseInt( gpioPinStr = gpio ) )
 
 const {
@@ -39,11 +41,12 @@ const {
     db = 'sensor',
     dbPort = 28015,
     table = 'dht',
-    tag = hostname()
+    tag = hostname(),
+    warmup = 5
 } = program.parse(process.argv)
 
 if (gpioPinStr === undefined) {
-    perror('GPIO pin of DHT-11 sensor is required!')
+    perror('GPIO pin of DHT-22 sensor is required!')
     process.exit(1)
 }
 
@@ -54,9 +57,12 @@ if ( String(gpioPin) !== gpioPinStr || !gpioPin ) {
 
 let prevTemp, prevHumid
 const intervalFunc = () =>
-    DHT.read(11, gpioPin, (err, temperature, humidity) => {
+    DHT.read(22, gpioPin, (err, temperature, humidity) => {
     	if (err)
 	    return perror(err.message)
+
+	temperature = toDecimal(temperature, 1)
+	humidity = toDecimal(humidity, 1)
 
 	if (aggregate && prevTemp === temperature && prevHumid === humidity)
 	    return
@@ -78,6 +84,8 @@ const intervalFunc = () =>
     })
 
 
-// setup interval, execute immediately
-setInterval(intervalFunc, max(3, interval) * 1000)
-intervalFunc()
+// wait for sensor chip to warm up
+setTimeout( () => {
+    setInterval(intervalFunc, max(3, interval) * 1000)
+    intervalFunc()
+}, warmup * 1000 )
