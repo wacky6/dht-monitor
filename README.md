@@ -24,6 +24,7 @@ dht-monitor
     --db-port <port>       Rethinkdb port, default: 28015
     --db <db>              Rethinkdb database, default: "sensor"
     --table <table>        Rethinkdb table, default: "dht"
+    -w, --warmup <secs>    Warpup delay, in seconds; default: 5
 ```
 
 
